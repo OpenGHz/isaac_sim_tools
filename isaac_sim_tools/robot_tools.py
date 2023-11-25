@@ -1,7 +1,8 @@
 from .basic_tools import IsaacTools
 from omni.isaac.core.robots import RobotView, Robot
-import numpy as np
 from omni.isaac.dynamic_control import _dynamic_control
+
+import numpy as np
 from copy import copy, deepcopy
 
 
@@ -53,14 +54,48 @@ class RobotTools(object):
         else: return surface_gripper_node
 
 
+class DynamicController(object):
+    """ 动力学控制器类 """
+    inited = False
+    _dc_interface = None
+    def __init__(self, robot_prim_path) -> None:
+        self.init()
+        self.articulation_handle = self._dc_interface.get_articulation(robot_prim_path)
+        self._articulations = {}
+        # Get information about the structure of the articulation
+        self.num_joints = self._dc_interface.get_articulation_joint_count(self.articulation_handle)
+        self.num_dofs = self._dc_interface.get_articulation_dof_count(self.articulation_handle)
+        self.num_bodies = self._dc_interface.get_articulation_body_count(self.articulation_handle)
+
+    @classmethod
+    def init(cls):
+        """ 初始化动力学控制器 """
+        if not cls.inited:
+            cls._dc_interface = _dynamic_control.acquire_dynamic_control_interface()
+            cls.inited = True
+
+    def wake_up(self):
+        self._dc_interface.wake_up_articulation(self.articulation_handle)
+
+    def add_joint_names(self, joint_names):
+        articulation_list = []
+        for name in joint_names:
+            self._articulations[name] = self._dc_interface.find_articulation_dof(self.articulation_handle, name)
+            articulation_list.append(self._articulations[name])
+        return articulation_list
+
+
 class JointGroup(object):
     """ 关节控制类 """
 
-    def __init__(self, group_name) -> None:
+    def __init__(self, group_name, joint_names = None) -> None:
         self.group_name = group_name
-        self._joint_names = None
-        self._joint_properties = {'drive_mode':[],'stiffness':[],'damping':[],'max_effort':[],'max_velocity':[]}
+        self.joint_names = joint_names
+        self._joint_properties = {'drive_mode':[],'stiffness':[],'damping':[],
+                                  'max_effort':[],'max_velocity':[],
+                                  'has_limits':[],'upper':[],'lower':[]}
         self._default_position = None
+        self._control_mode = None
 
     @property
     def joint_names(self):
@@ -68,13 +103,29 @@ class JointGroup(object):
 
     @joint_names.setter
     def joint_names(self, joint_names):
+        """ 需要首先设置 """
+        if joint_names is None: return
         self._joint_names = copy(joint_names)
         self._joint_num = len(joint_names)
         self._default_position = [0] * self._joint_num
+        self._control_mode = ['position'] * self._joint_num
 
     @property
     def joint_num(self):
         return self._joint_num
+
+    @property
+    def control_mode(self):
+        return copy(self._control_mode)
+
+    @control_mode.setter
+    def control_mode(self, control_mode):
+        if isinstance(control_mode, str):
+            control_mode = [control_mode] * self._joint_num
+        for mode in control_mode:
+            if mode not in ['force','velocity','position']:
+                raise Exception('错误的控制模式输入')
+        self._control_mode = copy(control_mode)
 
     @property
     def default_positions(self):
@@ -82,6 +133,8 @@ class JointGroup(object):
 
     @default_positions.setter
     def default_positions(self, default_positions):
+        if isinstance(default_positions, int) or isinstance(default_positions, float):
+            default_positions = [default_positions] * self._joint_num
         self._default_position = deepcopy(default_positions)
 
     @property
@@ -98,7 +151,9 @@ class JointGroup(object):
 
     @drive_mode.setter
     def drive_mode(self, drive_mode):
-        self.joint_properties['drive_mode'] = copy(drive_mode)
+        if isinstance(drive_mode, str):
+            drive_mode = [drive_mode] * self._joint_num
+        self._joint_properties['drive_mode'] = copy(drive_mode)
 
     @property
     def stiffness(self):
@@ -106,7 +161,9 @@ class JointGroup(object):
 
     @stiffness.setter
     def stiffness(self, stiffness):
-        self.joint_properties['stiffness'] = copy(stiffness)
+        if isinstance(stiffness, int) or isinstance(stiffness, float):
+            stiffness = [stiffness] * self._joint_num
+        self._joint_properties['stiffness'] = copy(stiffness)
 
     @property
     def damping(self):
@@ -114,7 +171,9 @@ class JointGroup(object):
     
     @damping.setter
     def damping(self, damping):
-        self.joint_properties['damping'] = copy(damping)
+        if isinstance(damping, int) or isinstance(damping, float):
+            damping = [damping] * self._joint_num
+        self._joint_properties['damping'] = copy(damping)
 
     @property
     def max_effort(self):
@@ -122,7 +181,9 @@ class JointGroup(object):
     
     @max_effort.setter
     def max_effort(self, max_effort):
-        self.joint_properties['max_effort'] = copy(max_effort)
+        if isinstance(max_effort, int) or isinstance(max_effort, float):
+            max_effort = [max_effort] * self._joint_num
+        self._joint_properties['max_effort'] = copy(max_effort)
 
     @property
     def max_velocity(self):
@@ -130,7 +191,35 @@ class JointGroup(object):
 
     @max_velocity.setter
     def max_velocity(self, max_velocity):
-        self.joint_properties['max_velocity'] = copy(max_velocity)
+        if isinstance(max_velocity, int) or isinstance(max_velocity, float):
+            max_velocity = [max_velocity] * self._joint_num
+        self._joint_properties['max_velocity'] = copy(max_velocity)
+
+    @property
+    def has_limits(self):
+        return copy(self.joint_properties['has_limits'])
+
+    @has_limits.setter
+    def has_limits(self, has_limits):
+        if isinstance(has_limits, bool):
+            has_limits = [has_limits] * self._joint_num
+        self._joint_properties['has_limits'] = copy(has_limits)
+
+    @property
+    def upper(self):
+        return copy(self.joint_properties['upper'])
+
+    @upper.setter
+    def upper(self, upper):
+        self._joint_properties['upper'] = copy(upper)
+
+    @property
+    def lower(self):
+        return copy(self.joint_properties['lower'])
+
+    @lower.setter
+    def lower(self, lower):
+        self._joint_properties['lower'] = copy(lower)
 
 
 class RobotInfo(object):
@@ -157,14 +246,16 @@ class MoveGroup(object):
     """ MoveGroup """
     def __init__(self, joint_group:JointGroup, robot_prim_path:str) -> None:
         # initialize dynamic control, must be done after world.reset() in which articulations are initialized
+        self._robot_prim_path = robot_prim_path
+        self.joint_num = joint_group.joint_num
+        self.group_name = joint_group.group_name
+        self.control_mode = joint_group.control_mode
         self._dc_interface = _dynamic_control.acquire_dynamic_control_interface()
         self._articulation_handle = self._dc_interface.get_articulation(robot_prim_path)
         self._wake_up()
-        self.joint_num = joint_group.joint_num
-        self.group_name = joint_group.group_name
         self._Joint_ptr_X = [self._dc_interface.find_articulation_dof(self._articulation_handle, joint) for joint in joint_group.joint_names]
         self._Joint_properties_X = [_dynamic_control.DofProperties()] * self.joint_num
-        self.default_properties()
+        self.set_default_properties()
         self.set_properties(self._process_empty_properties(joint_group.joint_properties))
         self.set_position_target(joint_group.default_positions)
         self._current_positions = joint_group.default_positions
@@ -174,13 +265,17 @@ class MoveGroup(object):
     def get_name(self):
         return self.group_name
 
-    def default_properties(self):
-        self._default_properties = {'drive_mode':'force',
-                                   'stiffness':15000,'damping':1400,
-                                   'max_effort':5000,'max_velocity':100}
+    def set_default_properties(self, default_properties=None):
         self._mode_map = {'force':_dynamic_control.DRIVE_FORCE,
-                        'velocity':None,
-                        'position':None}
+                        'acceleration':_dynamic_control.DRIVE_ACCELERATION}
+        if default_properties is None:
+            self._default_properties = {'drive_mode':'force',
+                                    'stiffness':15000,'damping':1400,
+                                    'max_effort':5000,'max_velocity':100,
+                                    'has_limits':None,'upper':np.pi,'lower':-np.pi}
+        else: self._default_properties = default_properties
+
+    def get_default_properties(self):
         return self._default_properties
 
     def _wake_up(self):
@@ -208,24 +303,35 @@ class MoveGroup(object):
         joint_properties = self._convert_drive_mode(deepcopy(joint_properties))
         self._wake_up()
         for j in range(self.joint_num):
+            # 速度控制模式下，关节的刚度必须为0
+            if self.control_mode[j] == 'velocity':
+                joint_properties['stiffness'][j] = 0
             self._Joint_properties_X[j].drive_mode = joint_properties['drive_mode'][j]
             self._Joint_properties_X[j].stiffness = joint_properties['stiffness'][j]
             self._Joint_properties_X[j].damping = joint_properties['damping'][j]
             self._Joint_properties_X[j].max_effort = joint_properties['max_effort'][j]
             self._Joint_properties_X[j].max_velocity = joint_properties['max_velocity'][j]
+            # 为None时不额外配置，使用默认值（经测试，这部分的设置没有作用，以USD中设置为准）
+            if joint_properties['has_limits'][j] is not None:
+                self._Joint_properties_X[j].has_limits = joint_properties['has_limits'][j]
+                if joint_properties['has_limits'][j]:
+                    self._Joint_properties_X[j].upper = joint_properties['upper'][j]
+                    self._Joint_properties_X[j].lower = joint_properties['lower'][j]
             self._dc_interface.set_dof_properties(self._Joint_ptr_X[j], self._Joint_properties_X[j])
 
     def set_position_target(self, positions):
-        """ 设置关节位置 """
+        """ 设置关节位置目标，无关位置值可以任意设置，如设置为None """
         self._wake_up()
         for j in range(self.joint_num):
-            self._dc_interface.set_dof_position_target(self._Joint_ptr_X[j], positions[j])
+            if self.control_mode[j] == 'position':
+                self._dc_interface.set_dof_position_target(self._Joint_ptr_X[j], positions[j])
 
     def set_velocity_target(self, velocities):
-        """ 设置关节速度 """
+        """ 设置关节速度目标，无关速度值可以任意设置，如设置为None """
         self._wake_up()
         for j in range(self.joint_num):
-            self._dc_interface.set_dof_velocity_target(self._Joint_ptr_X[j], velocities[j])
+            if self.control_mode[j] == 'velocity':
+                self._dc_interface.set_dof_velocity_target(self._Joint_ptr_X[j], velocities[j])
 
     def update_current_states(self):
         """ 更新并获取当前关节状态 """
@@ -260,6 +366,12 @@ class RobotControl(object):
         self.move_groups = {}
         if joint_groups is not None:
             self.create_move_groups(joint_groups)
+        self._dc_interface = _dynamic_control.acquire_dynamic_control_interface()
+        self._articulation_handle = self._dc_interface.get_articulation(info.prim_path)
+
+    def wake_up(self):
+        """ 每次仿真循环需先唤醒机器人，然后才能进行控制 """
+        self._dc_interface.wake_up_articulation(self._articulation_handle)
 
     def create_move_group(self, group:JointGroup):
         """ 构建MoveGroup对象 """
