@@ -257,7 +257,8 @@ class MoveGroup(object):
         self._Joint_properties_X = [_dynamic_control.DofProperties()] * self.joint_num
         self.set_default_properties()
         self.set_properties(self._process_empty_properties(joint_group.joint_properties))
-        self.set_position_target(joint_group.default_positions)
+        if joint_group.default_positions is not None:
+            self.set_position_target(joint_group.default_positions)
         self._current_positions = joint_group.default_positions
         self._current_velocities = [0] * self.joint_num
         self._current_efforts = [0] * self.joint_num
