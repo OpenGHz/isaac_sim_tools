@@ -252,11 +252,15 @@ class MoveGroup(object):
         self.control_mode = joint_group.control_mode
         self._dc_interface = _dynamic_control.acquire_dynamic_control_interface()
         self._articulation_handle = self._dc_interface.get_articulation(robot_prim_path)
+        # Sanity check -- make sure handle is not invalid handle -- it should only ever be None or a valid integer
+        assert self._articulation_handle != _dynamic_control.INVALID_HANDLE, \
+            f"Got invalid articulation handle for entity at {self.articulation_root_path}"
         self._wake_up()
         self._Joint_ptr_X = [self._dc_interface.find_articulation_dof(self._articulation_handle, joint) for joint in joint_group.joint_names]
         self._Joint_properties_X = [_dynamic_control.DofProperties()] * self.joint_num
         self.set_default_properties()
-        self.set_properties(self._process_empty_properties(joint_group.joint_properties))
+        self._properties = self._process_empty_properties(joint_group.joint_properties)
+        self.set_properties(self._properties)
         if joint_group.default_positions is not None:
             self.set_position_target(joint_group.default_positions)
         self._current_positions = joint_group.default_positions
@@ -343,6 +347,42 @@ class MoveGroup(object):
             self._current_velocities[j] = np.float32(all_joint_states[j].vel)
             self._current_efforts[j]   = np.float32(all_joint_states[j].effort)
         return self.current_positions, self.current_velocities, self.current_efforts
+
+    def get_current_positions(self):
+        """ 获取当前关节位置 """
+        for j in range(self.joint_num):
+            self._current_positions[j] = self._dc_interface.get_dof_state(self._Joint_ptr_X[j],
+                                                                          _dynamic_control.STATE_POS)["pos"]
+        return self._current_positions
+
+    def get_current_velocities(self):
+        """ 获取当前关节速度 """
+        for j in range(self.joint_num):
+            self._current_velocities[j] = self._dc_interface.get_dof_state(self._Joint_ptr_X[j],
+                                                                           _dynamic_control.STATE_VEL)["vel"]
+        return self._current_velocities
+
+    def get_current_efforts(self):
+        """ 获取当前关节力 """
+        for j in range(self.joint_num):
+            self._current_efforts[j] = self._dc_interface.get_dof_state(self._Joint_ptr_X[j],
+                                                                        _dynamic_control.STATE_EFFORT)["effort"]
+        return self._current_efforts
+
+    def get_properties(self):
+        """ 获取关节属性 """
+        properties = deepcopy(self._properties)
+        for j in range(self.joint_num):
+            joint_properties = self._dc_interface.get_dof_properties(self._Joint_ptr_X[j])
+            properties['drive_mode'][j] = joint_properties.drive_mode
+            properties['stiffness'][j] = joint_properties.stiffness
+            properties['damping'][j] = joint_properties.damping
+            properties['max_effort'][j] = joint_properties.max_effort
+            properties['max_velocity'][j] = joint_properties.max_velocity
+            properties['has_limits'][j] = joint_properties.has_limits
+            properties['upper'][j] = joint_properties.upper
+            properties['lower'][j] = joint_properties.lower
+        return properties
 
     @property
     def current_positions(self):
