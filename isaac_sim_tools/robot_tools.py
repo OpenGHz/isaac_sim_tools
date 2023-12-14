@@ -244,13 +244,15 @@ class RobotInfo(object):
 
 class MoveGroup(object):
     """ MoveGroup """
+    _dc_interface = None
     def __init__(self, joint_group:JointGroup, robot_prim_path:str) -> None:
         # initialize dynamic control, must be done after world.reset() in which articulations are initialized
         self._robot_prim_path = robot_prim_path
         self.joint_num = joint_group.joint_num
         self.group_name = joint_group.group_name
         self.control_mode = joint_group.control_mode
-        self._dc_interface = _dynamic_control.acquire_dynamic_control_interface()
+        if MoveGroup._dc_interface is None:
+            MoveGroup._dc_interface = _dynamic_control.acquire_dynamic_control_interface()
         self._articulation_handle = self._dc_interface.get_articulation(robot_prim_path)
         # Sanity check -- make sure handle is not invalid handle -- it should only ever be None or a valid integer
         assert self._articulation_handle != _dynamic_control.INVALID_HANDLE, \
@@ -338,6 +340,15 @@ class MoveGroup(object):
             if self.control_mode[j] == 'velocity':
                 self._dc_interface.set_dof_velocity_target(self._Joint_ptr_X[j], velocities[j])
 
+    def set_target(self, targets):
+        """ 设置关节目标位置/速度（取决于关节模式配置） """
+        self._wake_up()
+        for j in range(self.joint_num):
+            if self.control_mode[j] == 'position':
+                self._dc_interface.set_dof_position_target(self._Joint_ptr_X[j], targets[j])
+            elif self.control_mode[j] == 'velocity':
+                self._dc_interface.set_dof_velocity_target(self._Joint_ptr_X[j], targets[j])
+
     def update_current_states(self):
         """ 更新并获取当前关节状态 """
         all_joint_states = [None] * self.joint_num
@@ -352,21 +363,21 @@ class MoveGroup(object):
         """ 获取当前关节位置 """
         for j in range(self.joint_num):
             self._current_positions[j] = self._dc_interface.get_dof_state(self._Joint_ptr_X[j],
-                                                                          _dynamic_control.STATE_POS)["pos"]
+                                                                          _dynamic_control.STATE_POS).pos
         return self._current_positions
 
     def get_current_velocities(self):
         """ 获取当前关节速度 """
         for j in range(self.joint_num):
             self._current_velocities[j] = self._dc_interface.get_dof_state(self._Joint_ptr_X[j],
-                                                                           _dynamic_control.STATE_VEL)["vel"]
+                                                                           _dynamic_control.STATE_VEL).vel
         return self._current_velocities
 
     def get_current_efforts(self):
         """ 获取当前关节力 """
         for j in range(self.joint_num):
             self._current_efforts[j] = self._dc_interface.get_dof_state(self._Joint_ptr_X[j],
-                                                                        _dynamic_control.STATE_EFFORT)["effort"]
+                                                                        _dynamic_control.STATE_EFFORT).effort
         return self._current_efforts
 
     def get_properties(self):
@@ -407,7 +418,9 @@ class RobotControl(object):
         self.move_groups = {}
         if joint_groups is not None:
             self.create_move_groups(joint_groups)
-        self._dc_interface = _dynamic_control.acquire_dynamic_control_interface()
+            self._dc_interface = self.move_groups[0]._dc_interface
+        else:
+            self._dc_interface = _dynamic_control.acquire_dynamic_control_interface()
         self._articulation_handle = self._dc_interface.get_articulation(info.prim_path)
 
     def wake_up(self):
